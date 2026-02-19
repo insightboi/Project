@@ -1,0 +1,147 @@
+<?php
+// API endpoint for exporting projects
+require_once '../config.php';
+requireLogin();
+
+$projectId = $_GET['project_id'] ?? 0;
+$format = $_GET['format'] ?? 'pdf';
+
+if (!$projectId || !in_array($format, ['pdf', 'docx', 'txt'])) {
+    http_response_code(400);
+    echo 'Invalid request';
+    exit();
+}
+
+// Verify project ownership
+$project = getProject($projectId, $_SESSION['user_id']);
+if (!$project) {
+    http_response_code(404);
+    echo 'Project not found';
+    exit();
+}
+
+// Generate export content
+$content = generateExportContent($project);
+$filename = generateSlug($project['title']) . '_' . date('Y-m-d');
+
+switch ($format) {
+    case 'pdf':
+        exportToPDF($content, $filename);
+        break;
+    case 'docx':
+        exportToDOCX($content, $filename);
+        break;
+    case 'txt':
+        $result = exportToTXT($content, $filename);
+        if ($result['success']) {
+            // Log export
+            global $conn;
+            $stmt = $conn->prepare("INSERT INTO export_history (user_id, project_id, export_type, file_path) VALUES (?, ?, ?, ?)");
+            $stmt->bind_param("iiss", $_SESSION['user_id'], $projectId, $format, $result['filepath']);
+            $stmt->execute();
+            
+            // Update project status
+            $stmt = $conn->prepare("UPDATE projects SET status = 'exported' WHERE id = ?");
+            $stmt->bind_param("i", $projectId);
+            $stmt->execute();
+            
+            // Download file
+            header('Content-Type: text/plain');
+            header('Content-Disposition: attachment; filename="' . $filename . '.txt"');
+            readfile($result['filepath']);
+        } else {
+            echo 'Export failed: ' . $result['message'];
+        }
+        break;
+}
+
+function generateExportContent($project) {
+    $content = "PROJECT: " . strtoupper($project['title']) . "\n";
+    $content .= "=" . str_repeat("=", strlen($project['title'])) . "\n\n";
+    
+    $content .= "Generated: " . date('F j, Y') . "\n";
+    $content .= "Genre: " . ($project['genre'] ?? 'Not specified') . "\n";
+    $content .= "Target Audience: " . ($project['target_audience'] ?? 'Not specified') . "\n";
+    $content .= "Language: " . ($project['language'] ?? 'English') . "\n\n";
+    
+    $content .= "ORIGINAL IDEA:\n";
+    $content .= "-" . str_repeat("-", 15) . "\n";
+    $content .= $project['idea'] . "\n\n";
+    
+    if ($project['logline']) {
+        $content .= "STORY FOUNDATION:\n";
+        $content .= "-" . str_repeat("-", 18) . "\n";
+        $content .= "Logline:\n" . $project['logline'] . "\n\n";
+        
+        if ($project['theme']) {
+            $content .= "Theme:\n" . $project['theme'] . "\n\n";
+        }
+        
+        if ($project['emotional_tone']) {
+            $content .= "Emotional Tone:\n" . $project['emotional_tone'] . "\n\n";
+        }
+        
+        if ($project['unique_hook']) {
+            $content .= "Unique Hook:\n" . $project['unique_hook'] . "\n\n";
+        }
+    }
+    
+    if ($project['main_characters']) {
+        $content .= "CHARACTERS:\n";
+        $content .= "-" . str_repeat("-", 12) . "\n";
+        $content .= $project['main_characters'] . "\n\n";
+    }
+    
+    if ($project['budget_estimate']) {
+        $content .= "PRODUCTION PLAN:\n";
+        $content .= "-" . str_repeat("-", 17) . "\n";
+        $content .= "Budget Estimate: " . $project['budget_estimate'] . "\n\n";
+        
+        if ($project['locations']) {
+            $content .= "Key Locations:\n";
+            $locations = json_decode($project['locations'], true);
+            if (is_array($locations)) {
+                foreach ($locations as $location) {
+                    $content .= "- " . $location . "\n";
+                }
+            }
+            $content .= "\n";
+        }
+        
+        if ($project['cast_crew_requirements']) {
+            $content .= "Crew Requirements:\n";
+            $crew = json_decode($project['cast_crew_requirements'], true);
+            if (is_array($crew)) {
+                foreach ($crew as $member) {
+                    $content .= "- " . $member . "\n";
+                }
+            }
+            $content .= "\n";
+        }
+        
+        if ($project['shooting_schedule']) {
+            $content .= "Shooting Schedule:\n" . $project['shooting_schedule'] . "\n\n";
+        }
+    }
+    
+    if ($project['one_line_pitch']) {
+        $content .= "PITCH DECK:\n";
+        $content .= "-" . str_repeat("-", 12) . "\n";
+        $content .= "One-Line Pitch:\n" . $project['one_line_pitch'] . "\n\n";
+        
+        if ($project['market_appeal']) {
+            $content .= "Market Appeal:\n" . $project['market_appeal'] . "\n\n";
+        }
+        
+        if ($project['visual_style_reference']) {
+            $content .= "Visual Style Reference:\n" . $project['visual_style_reference'] . "\n\n";
+        }
+    }
+    
+    $content .= "\n" . str_repeat("=", 50) . "\n";
+    $content .= "Generated by Smart Film Makers - AI-Powered Script Generation\n";
+    $content .= "Visit us at: https://smartfilmmakers.com\n";
+    
+    return $content;
+}
+?>
